@@ -21,6 +21,8 @@ NFTABLES_CONF="/etc/nftables.conf"
 NFTABLES_CONF_BACKUP_DIR="/etc/port-forward"
 BEGIN_MARK="# BEGIN managed by port-forward-nft"
 END_MARK="# END managed by port-forward-nft"
+SYSCTL_BEGIN_MARK="# BEGIN managed by port-forward-nft sysctl"
+SYSCTL_END_MARK="# END managed by port-forward-nft sysctl"
 
 banner() {
   echo "========================================="
@@ -121,26 +123,116 @@ nftables_conf_backup() {
   echo "$backup_file"
 }
 
-set_sysctl_key() {
-  local key="$1"
-  local value="$2"
-
-  touch "$SYSCTL_FILE"
-  if grep -Eq "^[[:space:]]*${key//./\.}[[:space:]]*=" "$SYSCTL_FILE"; then
-    sed -i -E "s|^[[:space:]]*${key//./\\.}[[:space:]]*=.*$|${key} = ${value}|" "$SYSCTL_FILE"
-  else
-    printf '\n%s = %s\n' "$key" "$value" >> "$SYSCTL_FILE"
-  fi
+strip_managed_sysctl_block() {
+  local input="$1"
+  local output="$2"
+  awk -v begin="$SYSCTL_BEGIN_MARK" -v end="$SYSCTL_END_MARK" '''
+    $0 == begin { skip=1; next }
+    $0 == end { skip=0; next }
+    !skip { print }
+  ''' "$input" > "$output"
 }
 
-apply_sysctl_keys() {
+write_managed_sysctl_block() {
+  local block="$1"
+  touch "$SYSCTL_FILE"
+  local tmp_file cleaned_file
+  tmp_file=$(mktemp)
+  cleaned_file=$(mktemp)
+
+  strip_managed_sysctl_block "$SYSCTL_FILE" "$cleaned_file"
+
+  {
+    cat "$cleaned_file"
+    printf '\n%s\n' "$SYSCTL_BEGIN_MARK"
+    printf '%s\n' "$block"
+    printf '%s\n' "$SYSCTL_END_MARK"
+  } > "$tmp_file"
+
+  mv "$tmp_file" "$SYSCTL_FILE"
+  rm -f "$cleaned_file"
+}
+
+apply_sysctl_runtime_pairs() {
   while (( "$#" )); do
     local key="$1"
     local value="$2"
     shift 2
-    set_sysctl_key "$key" "$value"
     sysctl -w "$key=$value" >/dev/null
   done
+}
+
+render_sysctl_repair_block() {
+  cat <<'EOF'
+# ==========================
+# 路由 / 转发 / NAT 相关
+# ==========================
+net.ipv4.ip_forward = 1
+net.ipv4.conf.all.forwarding = 1
+net.ipv4.conf.default.forwarding = 1
+net.ipv6.conf.all.forwarding = 1
+net.ipv6.conf.default.forwarding = 1
+EOF
+}
+
+render_sysctl_optimized_block() {
+  cat <<'EOF'
+# ==========================
+# 文件句柄 / 系统容量
+# ==========================
+fs.file-max = 6815744
+
+# ==========================
+# 连接队列 / 服务端并发
+# ==========================
+net.ipv4.tcp_max_syn_backlog = 8192
+net.core.somaxconn = 8192
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_fin_timeout = 30
+
+# ==========================
+# BBR / 队列调度
+# ==========================
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+
+# ==========================
+# TCP 行为优化
+# ==========================
+net.ipv4.tcp_no_metrics_save = 1
+net.ipv4.tcp_ecn = 0
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_rfc1337 = 1
+net.ipv4.tcp_sack = 1
+net.ipv4.tcp_fack = 1
+net.ipv4.tcp_window_scaling = 1
+net.ipv4.tcp_adv_win_scale = 2
+net.ipv4.tcp_moderate_rcvbuf = 1
+net.ipv4.tcp_timestamps = 1
+
+# ==========================
+# 缓冲区 / 吞吐优化
+# ==========================
+net.ipv4.tcp_rmem = 4096 87380 67108864
+net.ipv4.tcp_wmem = 4096 65536 67108864
+net.core.rmem_max = 67108864
+net.core.wmem_max = 67108864
+net.ipv4.udp_rmem_min = 8192
+net.ipv4.udp_wmem_min = 8192
+net.ipv4.ip_local_port_range = 1024 65535
+
+# ==========================
+# 路由 / 转发 / NAT 相关
+# ==========================
+net.ipv4.conf.all.rp_filter = 0
+net.ipv4.conf.default.rp_filter = 0
+net.ipv4.ip_forward = 1
+net.ipv4.conf.all.forwarding = 1
+net.ipv4.conf.default.forwarding = 1
+net.ipv6.conf.all.forwarding = 1
+net.ipv6.conf.default.forwarding = 1
+net.ipv4.conf.all.route_localnet = 1
+EOF
 }
 
 repair_sysctl_flow() {
