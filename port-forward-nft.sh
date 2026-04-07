@@ -261,10 +261,14 @@ show_rules_summary() {
   fi
 
   echo "转发摘要："
+  declare -A seen=()
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
     local comment
     comment=$(sed -n 's/.*comment "\([^"]*\)".*/\1/p' <<< "$line")
+    [[ -n "$comment" ]] || continue
+    [[ -n "${seen[$comment]:-}" ]] && continue
+    seen[$comment]=1
     if [[ "$comment" =~ ^pf:(tcp|udp):([0-9]+):([0-9.]+):([0-9]+)$ ]]; then
       echo "- ${BASH_REMATCH[2]} -> ${BASH_REMATCH[3]}:${BASH_REMATCH[4]} (${BASH_REMATCH[1]})"
     fi
@@ -339,7 +343,12 @@ add_forwarding_flow() {
     echo "✅ 已添加：$proto $src_port -> $dst_ip:$dst_port"
   done
 
-  echo "ℹ️ 如需系统重启后保留规则，请执行菜单中的 nftables.conf 持久化功能"
+  read -r -p "是否立即写入 /etc/nftables.conf 持久化？(y/n): " persist_now
+  if [[ "$persist_now" =~ ^[Yy]$ ]]; then
+    persist_nftables_conf_flow
+  else
+    echo "ℹ️ 如需系统重启后保留规则，可稍后执行菜单中的“写入 /etc/nftables.conf 持久化”"
+  fi
 }
 
 delete_by_port_flow() {
