@@ -228,6 +228,8 @@ list_rules_flow() {
   echo "当前规则表：${SCRIPT_TABLE_FAMILY} ${SCRIPT_TABLE_NAME}"
   echo "========================================="
   nft list table "$SCRIPT_TABLE_FAMILY" "$SCRIPT_TABLE_NAME"
+  echo "-----------------------------------------"
+  show_rules_summary
   echo "========================================="
 }
 
@@ -236,6 +238,29 @@ add_rule_unique() {
   if ! nft list chain "$family" "$table" "$chain" 2>/dev/null | grep -Fq -- "$expr"; then
     nft add rule "$family" "$table" "$chain" $expr
   fi
+}
+
+has_managed_rule_entries() {
+  nft list table "$SCRIPT_TABLE_FAMILY" "$SCRIPT_TABLE_NAME" 2>/dev/null | grep -Eq 'comment "pf:(tcp|udp):'
+}
+
+show_rules_summary() {
+  local rules
+  rules=$(nft list table "$SCRIPT_TABLE_FAMILY" "$SCRIPT_TABLE_NAME" 2>/dev/null | grep -E 'comment "pf:(tcp|udp):' || true)
+  if [[ -z "$rules" ]]; then
+    echo "当前还没有任何转发条目，只创建了基础表和链。"
+    return 0
+  fi
+
+  echo "转发摘要："
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    local comment
+    comment=$(sed -n 's/.*comment "\([^"]*\)".*/\1/p' <<< "$line")
+    if [[ "$comment" =~ ^pf:(tcp|udp):([0-9]+):([0-9.]+):([0-9]+)$ ]]; then
+      echo "- ${BASH_REMATCH[2]} -> ${BASH_REMATCH[3]}:${BASH_REMATCH[4]} (${BASH_REMATCH[1]})"
+    fi
+  done <<< "$rules"
 }
 
 add_forwarding_flow() {
@@ -292,7 +317,7 @@ add_forwarding_flow() {
   local proto
   for proto in "${protos[@]}"; do
     add_rule_unique "$SCRIPT_TABLE_FAMILY" "$SCRIPT_TABLE_NAME" prerouting \
-      "iifname \"$iface\" $proto dport $src_port counter dnat to $dst_ip:$dst_port comment \"pf:$proto:$src_port:$dst_ip:$dst_port\""
+      "iifname \"$iface\" $proto dport $src_port counter dnat ip to $dst_ip:$dst_port comment \"pf:$proto:$src_port:$dst_ip:$dst_port\""
 
     add_rule_unique "$SCRIPT_TABLE_FAMILY" "$SCRIPT_TABLE_NAME" postrouting \
       "ip daddr $dst_ip $proto dport $dst_port counter masquerade comment \"pf:$proto:$src_port:$dst_ip:$dst_port\""
