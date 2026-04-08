@@ -253,7 +253,7 @@ repair_sysctl_flow() {
   backup_file=$(sysctl_backup)
   echo "📦 已备份到：$backup_file"
 
-  apply_sysctl_keys \
+  apply_sysctl_runtime_pairs \
     net.ipv4.ip_forward 1 \
     net.ipv4.conf.all.forwarding 1 \
     net.ipv4.conf.default.forwarding 1 \
@@ -282,7 +282,7 @@ optimize_system_flow() {
     echo "⚠️ 未能加载 tcp_bbr；若内核不支持，BBR 可能不会生效"
   fi
 
-  apply_sysctl_keys \
+  apply_sysctl_runtime_pairs \
     fs.file-max 6815744 \
     net.ipv4.tcp_max_syn_backlog 8192 \
     net.core.somaxconn 8192 \
