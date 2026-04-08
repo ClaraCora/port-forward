@@ -260,6 +260,10 @@ repair_sysctl_flow() {
     net.ipv6.conf.all.forwarding 1 \
     net.ipv6.conf.default.forwarding 1
 
+  local repair_block
+  repair_block=$(render_sysctl_repair_block)
+  write_managed_sysctl_block "$repair_block"
+
   echo "✅ /etc/sysctl.conf 已修复（仅更新指定项）"
 }
 
@@ -315,6 +319,10 @@ optimize_system_flow() {
     net.ipv6.conf.all.forwarding 1 \
     net.ipv6.conf.default.forwarding 1 \
     net.ipv4.conf.all.route_localnet 1
+
+  local optimized_block
+  optimized_block=$(render_sysctl_optimized_block)
+  write_managed_sysctl_block "$optimized_block"
 
   echo "✅ 系统优化完成"
   echo "  • BBR: $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo unknown)"
